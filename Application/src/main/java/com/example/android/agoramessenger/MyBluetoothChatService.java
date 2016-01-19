@@ -61,6 +61,7 @@ public class MyBluetoothChatService {
     private ConnectThread mConnectThread;
     private ConnectedThread mConnectedThread;
     private int mState;
+    private Context mContext;
 
     // Constants that indicate the current connection state
     public static final int STATE_NONE = 0;       // we're doing nothing
@@ -77,7 +78,7 @@ public class MyBluetoothChatService {
      * @param context The UI Activity Context
      */
     public MyBluetoothChatService(Context context, Handler handler) {
-        Context mContext = context;
+        mContext = context;
         mAdapter = BluetoothAdapter.getDefaultAdapter();
         mState = STATE_NONE;
         mHandler = handler;
@@ -125,13 +126,36 @@ public class MyBluetoothChatService {
         setState(STATE_LISTEN);
 
         // Start the thread to listen on a BluetoothServerSocket
-        if (mSecureAcceptThread == null) {
-            mSecureAcceptThread = new AcceptThread(true);
-            mSecureAcceptThread.start();
-        }
+//        if (mSecureAcceptThread == null) {
+//            mSecureAcceptThread = new AcceptThread(true);
+//            mSecureAcceptThread.start();
+//        }
         if (mInsecureAcceptThread == null) {
             mInsecureAcceptThread = new AcceptThread(false);
             mInsecureAcceptThread.start();
+        }
+
+        startDiscovering();
+    }
+
+    /**
+     * start discovering bt devices
+     */
+    public synchronized void startDiscovering() {
+        BluetoothAdapter btAdapter = BluetoothAdapter.getDefaultAdapter();
+        if(!btAdapter.isDiscovering()) {
+            btAdapter.startDiscovery();
+        }
+    }
+
+    /**
+     * cancel discovering bt devices
+     */
+    public synchronized void cancelDiscovering() {
+        Log.e(TAG, "discovering canceled");
+        BluetoothAdapter btAdapter = BluetoothAdapter.getDefaultAdapter();
+        if (btAdapter.isDiscovering()) {
+            btAdapter.cancelDiscovery();
         }
     }
 
@@ -160,11 +184,36 @@ public class MyBluetoothChatService {
             mConnectedThread = null;
         }
 
+        cancelDiscovering();
+
         // Start the thread to connect with the given device
         mConnectThread = new ConnectThread(device, secure);
         mConnectThread.start();
         setState(STATE_CONNECTING);
     }
+
+
+    /**
+     * stops all threads
+     *
+     */
+    public synchronized void disconnect() {
+        // Cancel any thread attempting to make a connection
+        if (mState == STATE_CONNECTING) {
+            if (mConnectThread != null) {
+                mConnectThread.cancel();
+                mConnectThread = null;
+            }
+        }
+        // Cancel any thread currently running a connection
+        if (mConnectedThread != null) {
+            mConnectedThread.cancel();
+            mConnectedThread = null;
+        }
+
+
+    }
+
 
     /**
      * Start the ConnectedThread to begin managing a Bluetooth connection
@@ -197,6 +246,7 @@ public class MyBluetoothChatService {
             mInsecureAcceptThread.cancel();
             mInsecureAcceptThread = null;
         }
+        cancelDiscovering();
 
         // Start the thread to manage the connection and perform transmissions
         mConnectedThread = new ConnectedThread(socket, socketType);
@@ -237,6 +287,9 @@ public class MyBluetoothChatService {
             mInsecureAcceptThread.cancel();
             mInsecureAcceptThread = null;
         }
+
+        cancelDiscovering();
+
         setState(STATE_NONE);
     }
 
@@ -287,6 +340,7 @@ public class MyBluetoothChatService {
         // Start the service over to restart listening mode
         MyBluetoothChatService.this.start();
     }
+
 
     /**
      * This thread runs while listening for incoming connections. It behaves
@@ -350,6 +404,10 @@ public class MyBluetoothChatService {
                                 // Situation normal. Start the connected thread.
                                 connected(socket, socket.getRemoteDevice(),
                                         mSocketType);
+//                                // start new Service and connect to device, continue listen
+//                                MyBluetoothChatService chatService = new MyBluetoothChatService(mContext, null);
+//                                chatService.connected(socket, socket.getRemoteDevice(), mSocketType);
+//                                setState(STATE_LISTEN);
                                 break;
                             case STATE_NONE:
                             case STATE_CONNECTED:
@@ -509,6 +567,7 @@ public class MyBluetoothChatService {
                     bytes = mmInStream.read(buffer);
 
                     String readMessage = new String(buffer, 0, bytes);
+                    Log.e(TAG, "received command: " + readMessage);
                     int returnValue = protocolHelper.processCommand(readMessage, "");
 
                     if (returnValue == ProtocolHelper.RETURN_VALUE_NOMORETOSEND) {
@@ -539,14 +598,14 @@ public class MyBluetoothChatService {
          * @param buffer The bytes to write
          */
         public void write(byte[] buffer) {
-
+            Log.e(TAG, "send command to btDevice");
             try {
                 mmOutStream.write(buffer);
 
                 if (buffer[0] == END_OF_MESSAGE) {
                     noMoreToSend = true;
                     if (noMoreToRead) {
-                        MyBluetoothChatService.this.start();
+                        disconnect();
                     }
                 }
 
